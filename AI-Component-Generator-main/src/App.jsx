@@ -1,15 +1,13 @@
-import Navbar from './components/Navbar';
+import Navbar from '../components/Navbar';
 import Select from 'react-select';
 import { BsStars } from "react-icons/bs";
 import { HiOutlineCode } from "react-icons/hi";
 import Editor from '@monaco-editor/react';
 import { useState } from 'react';
-import './App.css'
 import { PiExport } from "react-icons/pi";
 import { IoCopy, IoCloseSharp } from "react-icons/io5";
 import { ImNewTab } from "react-icons/im";
 import { FiRefreshCcw } from "react-icons/fi";
-import { GoogleGenAI } from "@google/genai";
 import { ClipLoader } from 'react-spinners';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -26,53 +24,74 @@ const Home = () => {
   const [outputScreen, setOutputScreen] = useState(false);
   const [tab, setTab] = useState(1);
   const [prompt, setPrompt] = useState("");
-  const [frameWork, setFramework] = useState(options[0]);
+  const [frameWork, setFrameWork] = useState(options[0]);
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [isNewTabOpen, setIsNewTabOpen] = useState(false);
+
+  const injectFix = (html) => {
+    const fix = `<script>
+      document.addEventListener('click', function(e) {
+        const target = e.target.closest('a');
+        if (target) {
+          const href = target.getAttribute('href');
+          if (href && !href.startsWith('#')) e.preventDefault();
+        }
+      }, true);
+
+      const _reload = () => {
+        const fns = ['restartGame','resetGame','initGame','startGame','init','initializeGame','newGame','reset','restart','setup'];
+        for (const fn of fns) {
+          if (typeof window[fn] === 'function') { window[fn](); return; }
+        }
+      };
+      try {
+        Object.defineProperty(window.location, 'reload', { value: _reload, writable: true });
+      } catch(e) {}
+
+      window.addEventListener('load', function() {
+        const fns = ['initializeGame','initGame','startGame','init','setup','newGame'];
+        for (const fn of fns) {
+          if (typeof window[fn] === 'function') { window[fn](); break; }
+        }
+      });
+    <\/script>`;
+    if (html.includes('</body>')) return html.replace('</body>', fix + '</body>');
+    return html + fix;
+  };
 
   function extractCode(response) {
     const match = response.match(/```(?:\w+)?\n?([\s\S]*?)```/);
     return match ? match[1].trim() : response.trim();
   }
 
-  const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_API_KEY });
-
   async function getResponse() {
     if (!prompt.trim()) {
-      toast.error("Please describe your component first!");
+      toast.error("Please describe your component!");
       return;
     }
+
     setLoading(true);
     try {
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        config: { thinkingConfig: { thinkingBudget: 0 } },
-        contents: `You are an experienced programmer with expertise in web development and UI/UX design. You create modern, animated, and fully responsive UI components.
-
-Now, generate a UI component for: ${prompt}
-Framework to use: ${frameWork.value}
-
-Requirements:
-- Clean, well-structured code.
-- Modern, animated, responsive UI design.
-- High-quality hover effects, shadows, animations, colors, typography.
-- Return ONLY the code in Markdown fenced code block.
-- Single complete HTML file only.
-- Use window.onload instead of DOMContentLoaded.
-- NEVER use location.reload() — use named functions like restartGame(), resetGame(), initGame() instead.
-- ALL buttons and interactive elements MUST work fully.
-- Do NOT include explanations or comments.`,
+      const result = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, framework: frameWork.value }),
       });
-      setCode(extractCode(response.text));
+
+      const data = await result.json();
+      if (!result.ok) throw new Error(data.error || "Generation failed.");
+
+      setCode(extractCode(data.text || ""));
       setOutputScreen(true);
       setTab(2);
       toast.success("Code generated!");
     } catch (err) {
       console.error(err);
       toast.error("Something went wrong. Try again!");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   const copyCode = async () => {
@@ -96,9 +115,9 @@ Requirements:
   };
 
   const refreshPreview = () => {
-    const c = code;
+    const currentCode = code;
     setCode('');
-    setTimeout(() => setCode(c), 50);
+    setTimeout(() => setCode(currentCode), 50);
   };
 
   return (
@@ -117,14 +136,28 @@ Requirements:
             options={options}
             defaultValue={options[0]}
             styles={{
-              control: (base) => ({ ...base, backgroundColor: "#111", borderColor: "#333", color: "#fff", boxShadow: "none", "&:hover": { borderColor: "#555" } }),
+              control: (base) => ({
+                ...base,
+                backgroundColor: "#111",
+                borderColor: "#333",
+                color: "#fff",
+                boxShadow: "none",
+                "&:hover": { borderColor: "#555" }
+              }),
               menu: (base) => ({ ...base, backgroundColor: "#111", color: "#fff" }),
-              option: (base, state) => ({ ...base, backgroundColor: state.isSelected ? "#333" : state.isFocused ? "#222" : "#111", color: "#fff", "&:active": { backgroundColor: "#444" } }),
+              option: (base, state) => ({
+                ...base,
+                backgroundColor: state.isSelected ? "#333" : state.isFocused ? "#222" : "#111",
+                color: "#fff",
+                "&:active": { backgroundColor: "#444" }
+              }),
               singleValue: (base) => ({ ...base, color: "#fff" }),
               placeholder: (base) => ({ ...base, color: "#aaa" }),
               input: (base) => ({ ...base, color: "#fff" }),
             }}
-            onChange={(e) => setFramework(e)}
+            onChange={(selectedOption) => {
+              if (selectedOption) setFrameWork(selectedOption);
+            }}
           />
 
           <p className='text-[15px] font-[700] mt-5'>Describe your component</p>
@@ -159,8 +192,18 @@ Requirements:
           ) : (
             <>
               <div className="top bg-[#17171C] w-full h-[60px] flex items-center gap-[15px] px-[20px]">
-                <button onClick={() => setTab(1)} className={`btn w-[50%] p-[10px] rounded-xl cursor-pointer transition-all ${tab === 1 ? 'bg-[#333]' : ''}`}>Code</button>
-                <button onClick={() => setTab(2)} className={`btn w-[50%] p-[10px] rounded-xl cursor-pointer transition-all ${tab === 2 ? 'bg-[#333]' : ''}`}>Preview</button>
+                <button
+                  onClick={() => setTab(1)}
+                  className={`btn w-[50%] p-[10px] rounded-xl cursor-pointer transition-all ${tab === 1 ? 'bg-[#333]' : ''}`}
+                >
+                  Code
+                </button>
+                <button
+                  onClick={() => setTab(2)}
+                  className={`btn w-[50%] p-[10px] rounded-xl cursor-pointer transition-all ${tab === 2 ? 'bg-[#333]' : ''}`}
+                >
+                  Preview
+                </button>
               </div>
 
               <div className="top2 bg-[#17171C] w-full h-[60px] flex items-center justify-between gap-[15px] px-[20px]">
@@ -168,13 +211,37 @@ Requirements:
                 <div className="flex items-center gap-[10px]">
                   {tab === 1 ? (
                     <>
-                      <button title="Copy" className="w-[40px] h-[40px] rounded-xl border-[1px] border-zinc-800 flex items-center justify-center transition-all hover:bg-[#333]" onClick={copyCode}><IoCopy /></button>
-                      <button title="Download" className="w-[40px] h-[40px] rounded-xl border-[1px] border-zinc-800 flex items-center justify-center transition-all hover:bg-[#333]" onClick={downloadFile}><PiExport /></button>
+                      <button
+                        title="Copy"
+                        className="w-[40px] h-[40px] rounded-xl border-[1px] border-zinc-800 flex items-center justify-center transition-all hover:bg-[#333]"
+                        onClick={copyCode}
+                      >
+                        <IoCopy />
+                      </button>
+                      <button
+                        title="Download"
+                        className="w-[40px] h-[40px] rounded-xl border-[1px] border-zinc-800 flex items-center justify-center transition-all hover:bg-[#333]"
+                        onClick={downloadFile}
+                      >
+                        <PiExport />
+                      </button>
                     </>
                   ) : (
                     <>
-                      <button title="Fullscreen" className="w-[40px] h-[40px] rounded-xl border-[1px] border-zinc-800 flex items-center justify-center transition-all hover:bg-[#333]" onClick={() => setIsNewTabOpen(true)}><ImNewTab /></button>
-                      <button title="Refresh" className="w-[40px] h-[40px] rounded-xl border-[1px] border-zinc-800 flex items-center justify-center transition-all hover:bg-[#333]" onClick={refreshPreview}><FiRefreshCcw /></button>
+                      <button
+                        title="Fullscreen"
+                        className="w-[40px] h-[40px] rounded-xl border-[1px] border-zinc-800 flex items-center justify-center transition-all hover:bg-[#333]"
+                        onClick={() => setIsNewTabOpen(true)}
+                      >
+                        <ImNewTab />
+                      </button>
+                      <button
+                        title="Refresh"
+                        className="w-[40px] h-[40px] rounded-xl border-[1px] border-zinc-800 flex items-center justify-center transition-all hover:bg-[#333]"
+                        onClick={refreshPreview}
+                      >
+                        <FiRefreshCcw />
+                      </button>
                     </>
                   )}
                 </div>
@@ -186,8 +253,8 @@ Requirements:
                 ) : (
                   <iframe
                     key={code}
-                    srcDoc={code}
-                    sandbox="allow-scripts allow-same-origin allow-forms allow-modals"
+                    srcDoc={injectFix(code)}
+                    sandbox="allow-scripts allow-same-origin"
                     className="w-full h-full bg-white"
                     title="preview"
                   />
@@ -199,17 +266,20 @@ Requirements:
       </div>
 
       {isNewTabOpen && (
-        <div className="fixed top-0 left-0 right-0 bottom-0 bg-white w-screen h-screen z-50 flex flex-col">
+        <div className="fixed top-0 left-0 right-0 bottom-0 z-50 flex flex-col bg-white w-screen h-screen">
           <div className="text-black w-full h-[60px] flex items-center justify-between px-[20px] border-b border-gray-200 flex-shrink-0">
             <p className='font-bold'>Fullscreen Preview</p>
-            <button className="w-[40px] h-[40px] rounded-xl border border-zinc-300 flex items-center justify-center hover:bg-gray-100 text-black" onClick={() => setIsNewTabOpen(false)}>
+            <button
+              className="w-[40px] h-[40px] rounded-xl border border-zinc-300 flex items-center justify-center hover:bg-gray-100 text-black"
+              onClick={() => setIsNewTabOpen(false)}
+            >
               <IoCloseSharp />
             </button>
           </div>
           <iframe
             key={code + 'fs'}
-            srcDoc={code}
-            sandbox="allow-scripts allow-same-origin allow-forms allow-modals"
+            srcDoc={injectFix(code)}
+            sandbox="allow-scripts allow-same-origin"
             className="w-full flex-1"
             title="fullscreen-preview"
           />
@@ -217,6 +287,6 @@ Requirements:
       )}
     </>
   );
-}
+};
 
 export default Home;
